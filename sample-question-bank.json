@@ -1,0 +1,29 @@
+{
+  "name": "Sample Custom Question Bank",
+  "part1Questions": [
+    "What is your favorite hobby?",
+    "Do you prefer watching movies at home or in a cinema?",
+    "How often do you use social media?",
+    "What kind of music do you enjoy listening to?",
+    "Do you like cooking? Why or why not?",
+    "What do you usually do on weekends?",
+    "Do you prefer hot or cold weather?",
+    "What was your favorite subject in school?"
+  ],
+  "part2CueCard": {
+    "title": "Describe a memorable event in your life",
+    "prompts": [
+      "What the event was",
+      "When and where it happened",
+      "Who was there with you",
+      "Why it was memorable to you"
+    ]
+  },
+  "part3Questions": [
+    "How do you think technology has changed the way people celebrate events?",
+    "Do you think modern celebrations are better than traditional ones?",
+    "What role do family gatherings play in your culture?",
+    "How important is it to preserve cultural traditions?",
+    "Do you think people spend too much money on celebrations?"
+  ]
+}
