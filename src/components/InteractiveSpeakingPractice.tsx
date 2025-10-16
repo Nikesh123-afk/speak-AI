@@ -69,8 +69,17 @@ export function InteractiveSpeakingPractice() {
 
   // Initialize Whisper on component mount
   useEffect(() => {
+    console.log('🚀 Initializing Whisper...');
+    console.log('Browser check:', {
+      AudioContext: !!window.AudioContext,
+      MediaRecorder: !!window.MediaRecorder,
+      isSupported: isWhisperSupported()
+    });
+    
     if (isWhisperSupported()) {
       setWhisperStatus('loading');
+      console.log('✅ Browser supports Whisper, starting initialization...');
+      
       initializeWhisper()
         .then(() => {
           setWhisperStatus('ready');
@@ -78,13 +87,21 @@ export function InteractiveSpeakingPractice() {
         })
         .catch((error) => {
           console.error('❌ Failed to initialize Whisper:', error);
+          console.error('Error details:', error.message, error.stack);
           setWhisperStatus('error');
-          alert('Failed to load Whisper AI. Please check your internet connection and refresh the page.');
+          
+          // Show user-friendly error
+          const errorMsg = `Whisper AI failed to load.\n\nError: ${error.message}\n\nPlease:\n1. Refresh the page\n2. Make sure you have stable internet\n3. Use Chrome or Edge browser\n\nThe app will still work but may have lower accuracy.`;
+          console.warn(errorMsg);
         });
     } else {
       console.error('❌ Whisper not supported in this browser');
+      console.error('Missing features:', {
+        AudioContext: !!window.AudioContext,
+        MediaRecorder: !!window.MediaRecorder
+      });
       setWhisperStatus('error');
-      alert('Your browser does not support Whisper AI. Please use a modern browser like Chrome or Edge.');
+      alert('Your browser does not support advanced speech recognition. Please use the latest version of Chrome or Edge.');
     }
   }, []);
 
