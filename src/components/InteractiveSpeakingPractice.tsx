@@ -60,24 +60,56 @@ export function InteractiveSpeakingPractice() {
   const [transcript, setTranscript] = useState('');
   const [interimTranscript, setInterimTranscript] = useState(''); // Show interim results
   const [isCapturingAnswer, setIsCapturingAnswer] = useState(false); // Track if we're waiting for answer
+  const [audioLevel, setAudioLevel] = useState(0); // Audio level for visual feedback
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
 
-  // Initialize Speech Recognition
+  // Initialize Speech Recognition with Advanced Settings
   useEffect(() => {
     if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
       const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
       recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = true;
-      recognitionRef.current.interimResults = true;
-      recognitionRef.current.lang = 'en-US';
+      
+      // Advanced Configuration for Better Recognition
+      recognitionRef.current.continuous = true;           // Keep listening continuously
+      recognitionRef.current.interimResults = true;       // Show results in real-time
+      recognitionRef.current.lang = 'en-US';              // English (US)
+      recognitionRef.current.maxAlternatives = 3;         // Get multiple alternatives for better accuracy
+      
+      // Advanced: Enable better recognition
+      if ('grammars' in recognitionRef.current) {
+        // This helps with better recognition of specific vocabulary
+        try {
+          const SpeechGrammarList = (window as any).webkitSpeechGrammarList || (window as any).SpeechGrammarList;
+          const grammar = '#JSGF V1.0; grammar ielts; public <phrase> = <word>+ ; <word> = /[a-zA-Z]+/ ;';
+          const speechRecognitionList = new SpeechGrammarList();
+          speechRecognitionList.addFromString(grammar, 1);
+          recognitionRef.current.grammars = speechRecognitionList;
+        } catch (e) {
+          console.log('Grammar not supported, using default');
+        }
+      }
 
       recognitionRef.current.onresult = (event: any) => {
         let interimText = '';
         let finalText = '';
         
         for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcriptPiece = event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
+          // Get the most confident alternative
+          const result = event.results[i];
+          const confidence = result[0].confidence;
+          let transcriptPiece = result[0].transcript;
+          
+          // If confidence is low, try second alternative
+          if (confidence < 0.7 && result.length > 1) {
+            console.log(`Low confidence (${confidence}), trying alternative`);
+            transcriptPiece = result[1].transcript;
+          }
+          
+          if (result.isFinal) {
             finalText += transcriptPiece + ' ';
+            console.log(`Final (confidence: ${(confidence * 100).toFixed(1)}%):`, transcriptPiece);
           } else {
             interimText += transcriptPiece;
           }
@@ -86,40 +118,82 @@ export function InteractiveSpeakingPractice() {
         // Update with both interim and final results
         if (finalText) {
           setTranscript(prev => prev + finalText);
-          console.log('Final transcript captured:', finalText);
+          console.log('✅ Final transcript captured:', finalText);
           setInterimTranscript(''); // Clear interim once we have final
         }
         if (interimText) {
           setInterimTranscript(interimText);
-          console.log('Interim transcript:', interimText);
+          console.log('⏳ Interim transcript:', interimText);
         }
       };
 
       recognitionRef.current.onerror = (event: any) => {
         console.error('Speech recognition error:', event.error);
-        if (event.error === 'no-speech') {
-          console.log('No speech detected, please speak louder');
-        } else if (event.error === 'audio-capture') {
-          console.error('No microphone detected');
-          alert('No microphone detected. Please check your microphone connection.');
-        } else if (event.error === 'not-allowed') {
-          console.error('Microphone permission denied');
-          alert('Microphone permission denied. Please allow microphone access.');
+        
+        // Handle different error types
+        switch(event.error) {
+          case 'no-speech':
+            console.log('⚠️ No speech detected - please speak louder or closer to microphone');
+            // Don't alert, just log - user might be thinking
+            break;
+          case 'audio-capture':
+            console.error('❌ No microphone detected');
+            alert('No microphone detected. Please check your microphone connection and refresh the page.');
+            break;
+          case 'not-allowed':
+            console.error('❌ Microphone permission denied');
+            alert('Microphone permission denied. Please click the lock icon in the address bar and allow microphone access, then refresh.');
+            break;
+          case 'network':
+            console.error('❌ Network error - speech recognition requires internet');
+            alert('Network error. Speech recognition requires an internet connection.');
+            break;
+          case 'aborted':
+            console.log('⚠️ Speech recognition aborted');
+            break;
+          default:
+            console.error('❌ Speech recognition error:', event.error);
         }
       };
 
       recognitionRef.current.onend = () => {
-        console.log('Speech recognition ended');
+        console.log('🔴 Speech recognition ended');
+        // Auto-restart if still recording (prevents unexpected stops)
+        if (isRecording) {
+          console.log('🔄 Auto-restarting speech recognition...');
+          try {
+            recognitionRef.current.start();
+          } catch (e) {
+            console.log('Recognition already running or stopped intentionally');
+          }
+        }
       };
 
       recognitionRef.current.onstart = () => {
-        console.log('Speech recognition started successfully');
+        console.log('🎤 Speech recognition started successfully');
       };
+
+      recognitionRef.current.onspeechstart = () => {
+        console.log('🗣️ Speech detected - listening...');
+      };
+
+      recognitionRef.current.onspeechend = () => {
+        console.log('🤐 Speech ended - processing...');
+      };
+
+      recognitionRef.current.onaudiostart = () => {
+        console.log('🔊 Audio capture started');
+      };
+
+      recognitionRef.current.onaudioend = () => {
+        console.log('🔇 Audio capture ended');
+      };
+
     } else {
       console.error('Speech recognition not supported in this browser');
-      alert('Speech recognition is not supported in your browser. Please use Chrome or Edge.');
+      alert('Speech recognition is not supported in your browser. Please use Chrome or Edge for the best experience.');
     }
-  }, []);
+  }, [isRecording]); // Add isRecording as dependency for auto-restart
 
   // Text-to-Speech function
   const speak = (text: string) => {
@@ -164,10 +238,40 @@ export function InteractiveSpeakingPractice() {
     setMessages(prev => [...prev, message]);
   };
 
-  // Start recording student's answer
+  // Start recording student's answer with Advanced Audio Monitoring
   const startRecording = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,      // Cancel echo
+          noiseSuppression: true,      // Suppress background noise
+          autoGainControl: true,       // Automatically adjust volume
+          sampleRate: 48000,           // High quality audio
+        } 
+      });
+      
+      // Setup audio level monitoring
+      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const audioContext = audioContextRef.current;
+      const audioSource = audioContext.createMediaStreamSource(stream);
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.8;
+      audioSource.connect(analyser);
+      analyserRef.current = analyser;
+      
+      // Monitor audio levels
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      const updateAudioLevel = () => {
+        if (analyserRef.current && isRecording) {
+          analyser.getByteFrequencyData(dataArray);
+          const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+          const normalizedLevel = Math.min(100, (average / 128) * 100);
+          setAudioLevel(normalizedLevel);
+          animationFrameRef.current = requestAnimationFrame(updateAudioLevel);
+        }
+      };
+      updateAudioLevel();
       
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
@@ -183,6 +287,15 @@ export function InteractiveSpeakingPractice() {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
         const audioUrl = URL.createObjectURL(audioBlob);
         
+        // Stop audio level monitoring
+        if (animationFrameRef.current) {
+          cancelAnimationFrame(animationFrameRef.current);
+        }
+        if (audioContextRef.current) {
+          audioContextRef.current.close();
+        }
+        setAudioLevel(0);
+        
         // Stop all tracks
         stream.getTracks().forEach(track => track.stop());
         
@@ -195,25 +308,32 @@ export function InteractiveSpeakingPractice() {
       setInterimTranscript('');
       setIsCapturingAnswer(true);
       
-      // Start speech recognition
+      // Start speech recognition with retry logic
       if (recognitionRef.current) {
         try {
           recognitionRef.current.start();
-          console.log('Speech recognition started');
-        } catch (error) {
-          console.error('Error starting speech recognition:', error);
+          console.log('🎤 Speech recognition started');
+        } catch (error: any) {
+          if (error.message && error.message.includes('already started')) {
+            console.log('⚠️ Recognition already running');
+          } else {
+            console.error('❌ Error starting speech recognition:', error);
+          }
         }
       } else {
-        console.error('Speech recognition not initialized');
+        console.error('❌ Speech recognition not initialized');
         alert('Speech recognition is not available. Please use Chrome or Edge browser.');
       }
 
       mediaRecorder.start();
       setIsRecording(true);
-      console.log('Recording started');
+      console.log('🔴 Recording started with advanced audio settings');
+      console.log('✅ Echo cancellation: ON');
+      console.log('✅ Noise suppression: ON');
+      console.log('✅ Auto gain control: ON');
     } catch (error) {
-      console.error('Error accessing microphone:', error);
-      alert('Please allow microphone access to practice speaking!');
+      console.error('❌ Error accessing microphone:', error);
+      alert('Please allow microphone access to practice speaking! Click the lock icon in the address bar to grant permission.');
     }
   };
 
@@ -692,10 +812,35 @@ export function InteractiveSpeakingPractice() {
                 {isCapturingAnswer && (
                   <div className="flex justify-end">
                     <div className="bg-green-50 border border-green-200 p-4 rounded-lg max-w-[80%]">
-                      <div className="flex items-center gap-2 mb-2">
+                      <div className="flex items-center gap-2 mb-3">
                         <div className="animate-pulse rounded-full h-3 w-3 bg-green-500"></div>
                         <span className="text-green-700 font-semibold text-sm">🎤 Listening...</span>
                       </div>
+                      
+                      {/* Audio Level Meter */}
+                      <div className="mb-3">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-xs text-gray-600">Audio Level:</span>
+                          <span className="text-xs font-mono text-gray-700">{Math.round(audioLevel)}%</span>
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                          <div 
+                            className={`h-full transition-all duration-100 ${
+                              audioLevel > 50 ? 'bg-green-500' : 
+                              audioLevel > 20 ? 'bg-yellow-500' : 
+                              'bg-red-400'
+                            }`}
+                            style={{ width: `${Math.min(100, audioLevel)}%` }}
+                          />
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {audioLevel < 10 && "🔇 Speak louder or move closer to mic"}
+                          {audioLevel >= 10 && audioLevel < 30 && "📢 Good, speak a bit louder"}
+                          {audioLevel >= 30 && "✅ Perfect volume!"}
+                        </p>
+                      </div>
+                      
+                      {/* Transcript Display */}
                       {transcript && (
                         <p className="text-gray-800 text-sm mb-1 font-medium">{transcript}</p>
                       )}
