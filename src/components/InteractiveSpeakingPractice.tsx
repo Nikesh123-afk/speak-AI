@@ -264,9 +264,17 @@ export function InteractiveSpeakingPractice() {
       return;
     }
 
+    // Save transcript to a variable before clearing
+    const capturedTranscript = transcript.trim();
+    
     // Add student's response to chat
-    addMessage('student', transcript);
-    console.log('Student response captured:', transcript);
+    addMessage('student', capturedTranscript);
+    console.log('Student response captured:', capturedTranscript);
+
+    // Clear transcript for next recording
+    setTranscript('');
+    setInterimTranscript('');
+    console.log('Transcript cleared for next answer');
 
     try {
       // Generate AI follow-up question based on response
@@ -309,7 +317,7 @@ export function InteractiveSpeakingPractice() {
         } else {
           nextQuestion = await generateFollowUpQuestion(
             'Daily Life and Personal Information',
-            transcript,
+            capturedTranscript,
             'easy',
             1
           );
@@ -373,7 +381,7 @@ export function InteractiveSpeakingPractice() {
           } else {
             nextQuestion = await generateFollowUpQuestion(
               'Abstract Discussion',
-              transcript,
+              capturedTranscript,
               'hard',
               3
             );
