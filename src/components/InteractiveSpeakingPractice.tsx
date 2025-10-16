@@ -51,11 +51,14 @@ export function InteractiveSpeakingPractice() {
   const [preparationTime, setPreparationTime] = useState(0);
   const [showFeedback, setShowFeedback] = useState(false);
   const [sessionFeedback, setSessionFeedback] = useState('');
+  const [askedQuestions, setAskedQuestions] = useState<Set<string>>(new Set()); // Track asked questions
+  const [questionCount, setQuestionCount] = useState(0); // Track number of questions asked
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recognitionRef = useRef<any>(null);
   const [transcript, setTranscript] = useState('');
+  const [isCapturingAnswer, setIsCapturingAnswer] = useState(false); // Track if we're waiting for answer
 
   // Initialize Speech Recognition
   useEffect(() => {
@@ -149,14 +152,23 @@ export function InteractiveSpeakingPractice() {
         await processStudentResponse(audioUrl);
       };
 
+      // Clear previous transcript and start fresh
+      setTranscript('');
+      setIsCapturingAnswer(true);
+      
       // Start speech recognition
       if (recognitionRef.current) {
-        setTranscript('');
-        recognitionRef.current.start();
+        try {
+          recognitionRef.current.start();
+          console.log('Speech recognition started');
+        } catch (error) {
+          console.error('Error starting speech recognition:', error);
+        }
       }
 
       mediaRecorder.start();
       setIsRecording(true);
+      console.log('Recording started');
     } catch (error) {
       console.error('Error accessing microphone:', error);
       alert('Please allow microphone access to practice speaking!');
@@ -166,10 +178,18 @@ export function InteractiveSpeakingPractice() {
   // Stop recording
   const stopRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
+      console.log('Stopping recording...');
+      console.log('Current transcript:', transcript);
+      
       mediaRecorderRef.current.stop();
       
       if (recognitionRef.current) {
-        recognitionRef.current.stop();
+        try {
+          recognitionRef.current.stop();
+          console.log('Speech recognition stopped');
+        } catch (error) {
+          console.error('Error stopping speech recognition:', error);
+        }
       }
       
       setIsRecording(false);
@@ -179,11 +199,19 @@ export function InteractiveSpeakingPractice() {
   // Process student's response
   const processStudentResponse = async (audioUrl: string) => {
     setIsProcessing(true);
+    setIsCapturingAnswer(false);
+
+    // Validate transcript exists
+    if (!transcript || transcript.trim().length === 0) {
+      console.error('No transcript captured');
+      setIsProcessing(false);
+      alert('Sorry, I didn\'t catch your answer. Please try again and speak clearly.');
+      return;
+    }
 
     // Add student's response to chat
-    if (transcript) {
-      addMessage('student', transcript);
-    }
+    addMessage('student', transcript);
+    console.log('Student response captured:', transcript);
 
     try {
       // Generate AI follow-up question based on response
@@ -191,15 +219,35 @@ export function InteractiveSpeakingPractice() {
 
       if (examPart === 1) {
         // Part 1: Use questions from imported bank OR selected topic
-        if (importedBank && messages.length < 8) {
-          const questionIndex = Math.floor(messages.length / 2);
-          nextQuestion = importedBank.part1Questions[questionIndex % importedBank.part1Questions.length];
-        } else if (selectedTopic && messages.length < 8) {
-          const topicQuestions = getRandomQuestions(selectedTopic, 'part1', 5);
-          const questionIndex = Math.floor(messages.length / 2);
-          nextQuestion = topicQuestions[questionIndex % topicQuestions.length];
-        } else if (messages.length >= 8) {
-          // Move to Part 2
+        if (importedBank && questionCount < 4) {
+          // Get unasked question from imported bank
+          const availableQuestions = importedBank.part1Questions.filter(q => !askedQuestions.has(q));
+          if (availableQuestions.length > 0) {
+            nextQuestion = availableQuestions[0];
+            setAskedQuestions(prev => new Set(prev).add(nextQuestion));
+            setQuestionCount(prev => prev + 1);
+          } else {
+            // All questions asked, move to Part 2
+            nextQuestion = "Now, we'll move on to Part 2. I'm going to give you a topic and you'll have 1 minute to prepare. Then you should speak for 1-2 minutes.";
+            setExamPart(2);
+            setPreparationTime(60);
+          }
+        } else if (selectedTopic && questionCount < 4) {
+          // Get unasked question from selected topic
+          const topicQuestions = getRandomQuestions(selectedTopic, 'part1', 10); // Get more questions to avoid repeats
+          const availableQuestions = topicQuestions.filter(q => !askedQuestions.has(q));
+          if (availableQuestions.length > 0) {
+            nextQuestion = availableQuestions[0];
+            setAskedQuestions(prev => new Set(prev).add(nextQuestion));
+            setQuestionCount(prev => prev + 1);
+          } else {
+            // All questions asked, move to Part 2
+            nextQuestion = "Now, we'll move on to Part 2. I'm going to give you a topic and you'll have 1 minute to prepare. Then you should speak for 1-2 minutes.";
+            setExamPart(2);
+            setPreparationTime(60);
+          }
+        } else if (questionCount >= 4) {
+          // Move to Part 2 after 4-5 questions
           nextQuestion = "Now, we'll move on to Part 2. I'm going to give you a topic and you'll have 1 minute to prepare. Then you should speak for 1-2 minutes.";
           setExamPart(2);
           setPreparationTime(60);
@@ -210,43 +258,76 @@ export function InteractiveSpeakingPractice() {
             'easy',
             1
           );
+          setQuestionCount(prev => prev + 1);
         }
       } else if (examPart === 2) {
         // Generate Part 2 cue card from imported bank OR selected topic
-        let cueCardData;
-        if (importedBank && importedBank.part2CueCard) {
-          cueCardData = importedBank.part2CueCard;
-          nextQuestion = `${cueCardData.title}\n\nYou should say:\n${cueCardData.prompts.map((p, i) => `${i + 1}. ${p}`).join('\n')}\n\nYou have 1 minute to prepare. You can make notes if you wish.`;
-        } else if (selectedTopic) {
-          cueCardData = getCueCard(selectedTopic);
-          nextQuestion = `${cueCardData.title}\n\nYou should say:\n${cueCardData.prompts.map((p, i) => `${i + 1}. ${p}`).join('\n')}\n\nYou have 1 minute to prepare. You can make notes if you wish.`;
+        if (questionCount === 4) {
+          // First time in Part 2, show cue card
+          let cueCardData;
+          if (importedBank && importedBank.part2CueCard) {
+            cueCardData = importedBank.part2CueCard;
+            nextQuestion = `${cueCardData.title}\n\nYou should say:\n${cueCardData.prompts.map((p, i) => `${i + 1}. ${p}`).join('\n')}\n\nYou have 1 minute to prepare. You can make notes if you wish.`;
+          } else if (selectedTopic) {
+            cueCardData = getCueCard(selectedTopic);
+            nextQuestion = `${cueCardData.title}\n\nYou should say:\n${cueCardData.prompts.map((p, i) => `${i + 1}. ${p}`).join('\n')}\n\nYou have 1 minute to prepare. You can make notes if you wish.`;
+          } else {
+            const cueCard = await generatePart2CueCard();
+            nextQuestion = `${cueCard.mainTopic}\n\n${cueCard.description}\n${cueCard.points.join('\n')}\n\nYou have 1 minute to prepare. You can make notes if you wish.`;
+          }
+          setQuestionCount(prev => prev + 1);
+          
+          // Start preparation timer
+          setTimeout(async () => {
+            const readyPrompt = "Alright, your preparation time is up. Please begin speaking now.";
+            addMessage('examiner', readyPrompt);
+            await speak(readyPrompt);
+          }, 60000); // 60 seconds
         } else {
-          const cueCard = await generatePart2CueCard();
-          nextQuestion = `${cueCard.mainTopic}\n\n${cueCard.description}\n${cueCard.points.join('\n')}\n\nYou have 1 minute to prepare. You can make notes if you wish.`;
+          // After Part 2 long turn, move to Part 3
+          nextQuestion = "Thank you. Now let's discuss some more abstract questions related to this topic.";
+          setExamPart(3);
+          setQuestionCount(prev => prev + 1);
         }
-        
-        // Start preparation timer
-        setTimeout(async () => {
-          const readyPrompt = "Alright, your preparation time is up. Please begin speaking now.";
-          addMessage('examiner', readyPrompt);
-          await speak(readyPrompt);
-        }, 60000); // 60 seconds
       } else if (examPart === 3) {
         // Part 3: Use discussion questions from imported bank OR selected topic
-        if (importedBank) {
-          const questionIndex = Math.floor((messages.length - 10) / 2);
-          nextQuestion = importedBank.part3Questions[questionIndex % importedBank.part3Questions.length];
-        } else if (selectedTopic) {
-          const part3Questions = getRandomQuestions(selectedTopic, 'part3', 5);
-          const questionIndex = Math.floor((messages.length - 10) / 2);
-          nextQuestion = part3Questions[questionIndex % part3Questions.length];
+        if (questionCount < 10) { // Limit to 4-5 Part 3 questions
+          if (importedBank) {
+            const availableQuestions = importedBank.part3Questions.filter(q => !askedQuestions.has(q));
+            if (availableQuestions.length > 0) {
+              nextQuestion = availableQuestions[0];
+              setAskedQuestions(prev => new Set(prev).add(nextQuestion));
+              setQuestionCount(prev => prev + 1);
+            } else {
+              // All questions asked, end exam
+              await endExam();
+              return;
+            }
+          } else if (selectedTopic) {
+            const part3Questions = getRandomQuestions(selectedTopic, 'part3', 10);
+            const availableQuestions = part3Questions.filter(q => !askedQuestions.has(q));
+            if (availableQuestions.length > 0) {
+              nextQuestion = availableQuestions[0];
+              setAskedQuestions(prev => new Set(prev).add(nextQuestion));
+              setQuestionCount(prev => prev + 1);
+            } else {
+              // All questions asked, end exam
+              await endExam();
+              return;
+            }
+          } else {
+            nextQuestion = await generateFollowUpQuestion(
+              'Abstract Discussion',
+              transcript,
+              'hard',
+              3
+            );
+            setQuestionCount(prev => prev + 1);
+          }
         } else {
-          nextQuestion = await generateFollowUpQuestion(
-            'Abstract Discussion',
-            transcript,
-            'hard',
-            3
-          );
+          // End of exam after enough Part 3 questions
+          await endExam();
+          return;
         }
       }
 
@@ -541,6 +622,18 @@ export function InteractiveSpeakingPractice() {
                         <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
                         <span className="text-gray-600">Examiner is thinking...</span>
                       </div>
+                    </div>
+                  </div>
+                )}
+
+                {isCapturingAnswer && transcript && (
+                  <div className="flex justify-end">
+                    <div className="bg-green-50 border border-green-200 p-4 rounded-lg max-w-[80%]">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="animate-pulse rounded-full h-3 w-3 bg-green-500"></div>
+                        <span className="text-green-700 font-semibold text-sm">Capturing your answer...</span>
+                      </div>
+                      <p className="text-gray-700 text-sm italic">{transcript}</p>
                     </div>
                   </div>
                 )}
