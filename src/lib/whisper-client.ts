@@ -99,11 +99,10 @@ export async function transcribeStream(stream: MediaStream): Promise<string> {
  */
 export function isWhisperSupported(): boolean {
   try {
-    // Check for required browser APIs
+    // Check for required browser APIs (removed SharedArrayBuffer requirement)
     return !!(
       window.AudioContext &&
-      window.MediaRecorder &&
-      typeof SharedArrayBuffer !== 'undefined'
+      window.MediaRecorder
     );
   } catch {
     return false;
