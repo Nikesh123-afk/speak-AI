@@ -58,9 +58,6 @@ export function InteractiveSpeakingPractice() {
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  const recognitionRef = useRef<any>(null);
-  const [transcript, setTranscript] = useState('');
-  const [interimTranscript, setInterimTranscript] = useState(''); // Show interim results
   const [isCapturingAnswer, setIsCapturingAnswer] = useState(false); // Track if we're waiting for answer
   const [audioLevel, setAudioLevel] = useState(0); // Audio level for visual feedback
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -68,158 +65,28 @@ export function InteractiveSpeakingPractice() {
   const animationFrameRef = useRef<number | null>(null);
   
   // Whisper settings
-  const [useWhisper, setUseWhisper] = useState(true); // Use Whisper by default
   const [whisperStatus, setWhisperStatus] = useState<'loading' | 'ready' | 'error' | null>(null);
 
   // Initialize Whisper on component mount
   useEffect(() => {
-    if (useWhisper && isWhisperSupported()) {
+    if (isWhisperSupported()) {
       setWhisperStatus('loading');
       initializeWhisper()
         .then(() => {
           setWhisperStatus('ready');
-          console.log('✅ Whisper ready for speech recognition');
+          console.log('✅ Whisper ready for speech recognition (95% accuracy)');
         })
         .catch((error) => {
           console.error('❌ Failed to initialize Whisper:', error);
           setWhisperStatus('error');
-          setUseWhisper(false); // Fall back to Web Speech API
+          alert('Failed to load Whisper AI. Please check your internet connection and refresh the page.');
         });
-    } else if (useWhisper) {
-      console.warn('⚠️ Whisper not supported, falling back to Web Speech API');
-      setUseWhisper(false);
+    } else {
+      console.error('❌ Whisper not supported in this browser');
+      setWhisperStatus('error');
+      alert('Your browser does not support Whisper AI. Please use a modern browser like Chrome or Edge.');
     }
   }, []);
-
-  // Initialize Speech Recognition with Advanced Settings
-  useEffect(() => {
-    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-      const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
-      recognitionRef.current = new SpeechRecognition();
-      
-      // Advanced Configuration for Better Recognition
-      recognitionRef.current.continuous = true;           // Keep listening continuously
-      recognitionRef.current.interimResults = true;       // Show results in real-time
-      recognitionRef.current.lang = 'en-US';              // English (US)
-      recognitionRef.current.maxAlternatives = 3;         // Get multiple alternatives for better accuracy
-      
-      // Advanced: Enable better recognition
-      if ('grammars' in recognitionRef.current) {
-        // This helps with better recognition of specific vocabulary
-        try {
-          const SpeechGrammarList = (window as any).webkitSpeechGrammarList || (window as any).SpeechGrammarList;
-          const grammar = '#JSGF V1.0; grammar ielts; public <phrase> = <word>+ ; <word> = /[a-zA-Z]+/ ;';
-          const speechRecognitionList = new SpeechGrammarList();
-          speechRecognitionList.addFromString(grammar, 1);
-          recognitionRef.current.grammars = speechRecognitionList;
-        } catch (e) {
-          console.log('Grammar not supported, using default');
-        }
-      }
-
-      recognitionRef.current.onresult = (event: any) => {
-        let interimText = '';
-        let finalText = '';
-        
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          // Get the most confident alternative
-          const result = event.results[i];
-          const confidence = result[0].confidence;
-          let transcriptPiece = result[0].transcript;
-          
-          // If confidence is low, try second alternative
-          if (confidence < 0.7 && result.length > 1) {
-            console.log(`Low confidence (${confidence}), trying alternative`);
-            transcriptPiece = result[1].transcript;
-          }
-          
-          if (result.isFinal) {
-            finalText += transcriptPiece + ' ';
-            console.log(`Final (confidence: ${(confidence * 100).toFixed(1)}%):`, transcriptPiece);
-          } else {
-            interimText += transcriptPiece;
-          }
-        }
-        
-        // Update with both interim and final results
-        if (finalText) {
-          setTranscript(prev => prev + finalText);
-          console.log('✅ Final transcript captured:', finalText);
-          setInterimTranscript(''); // Clear interim once we have final
-        }
-        if (interimText) {
-          setInterimTranscript(interimText);
-          console.log('⏳ Interim transcript:', interimText);
-        }
-      };
-
-      recognitionRef.current.onerror = (event: any) => {
-        console.error('Speech recognition error:', event.error);
-        
-        // Handle different error types
-        switch(event.error) {
-          case 'no-speech':
-            console.log('⚠️ No speech detected - please speak louder or closer to microphone');
-            // Don't alert, just log - user might be thinking
-            break;
-          case 'audio-capture':
-            console.error('❌ No microphone detected');
-            alert('No microphone detected. Please check your microphone connection and refresh the page.');
-            break;
-          case 'not-allowed':
-            console.error('❌ Microphone permission denied');
-            alert('Microphone permission denied. Please click the lock icon in the address bar and allow microphone access, then refresh.');
-            break;
-          case 'network':
-            console.error('❌ Network error - speech recognition requires internet');
-            alert('Network error. Speech recognition requires an internet connection.');
-            break;
-          case 'aborted':
-            console.log('⚠️ Speech recognition aborted');
-            break;
-          default:
-            console.error('❌ Speech recognition error:', event.error);
-        }
-      };
-
-      recognitionRef.current.onend = () => {
-        console.log('🔴 Speech recognition ended');
-        // Auto-restart if still recording (prevents unexpected stops)
-        if (isRecording) {
-          console.log('🔄 Auto-restarting speech recognition...');
-          try {
-            recognitionRef.current.start();
-          } catch (e) {
-            console.log('Recognition already running or stopped intentionally');
-          }
-        }
-      };
-
-      recognitionRef.current.onstart = () => {
-        console.log('🎤 Speech recognition started successfully');
-      };
-
-      recognitionRef.current.onspeechstart = () => {
-        console.log('🗣️ Speech detected - listening...');
-      };
-
-      recognitionRef.current.onspeechend = () => {
-        console.log('🤐 Speech ended - processing...');
-      };
-
-      recognitionRef.current.onaudiostart = () => {
-        console.log('🔊 Audio capture started');
-      };
-
-      recognitionRef.current.onaudioend = () => {
-        console.log('🔇 Audio capture ended');
-      };
-
-    } else {
-      console.error('Speech recognition not supported in this browser');
-      alert('Speech recognition is not supported in your browser. Please use Chrome or Edge for the best experience.');
-    }
-  }, [isRecording]); // Add isRecording as dependency for auto-restart
 
   // Text-to-Speech function
   const speak = (text: string) => {
@@ -325,61 +192,44 @@ export function InteractiveSpeakingPractice() {
         // Stop all tracks
         stream.getTracks().forEach(track => track.stop());
         
-        // Transcribe with Whisper if enabled, otherwise use Web Speech API transcript
+        // Transcribe with Whisper AI
         let finalTranscript = '';
         
-        if (useWhisper && whisperStatus === 'ready') {
+        if (whisperStatus === 'ready') {
           try {
-            console.log('🎤 Transcribing with Whisper...');
+            console.log('🎤 Transcribing with Whisper AI (95% accuracy)...');
             setIsProcessing(true);
             finalTranscript = await transcribeAudio(audioBlob);
             console.log('✅ Whisper transcription:', finalTranscript);
           } catch (error) {
-            console.error('❌ Whisper transcription failed, falling back to Web Speech API');
-            finalTranscript = transcript.trim();
+            console.error('❌ Whisper transcription failed:', error);
+            alert('Transcription failed. Please try speaking again.');
+            setIsProcessing(false);
+            return;
           } finally {
             setIsProcessing(false);
           }
         } else {
-          // Use Web Speech API transcript (existing behavior)
-          finalTranscript = transcript.trim();
-          console.log('📝 Using Web Speech API transcript:', finalTranscript);
+          console.error('❌ Whisper not ready');
+          alert('Whisper AI is still loading. Please wait a moment and try again.');
+          return;
         }
         
         // Process the response with the final transcript
         await processStudentResponse(audioUrl, finalTranscript);
       };
 
-      // Clear previous transcript and start fresh
-      setTranscript('');
-      setInterimTranscript('');
+      // Start recording
       setIsCapturingAnswer(true);
-      
-      // Start speech recognition with retry logic (only if not using Whisper)
-      if (!useWhisper && recognitionRef.current) {
-        try {
-          recognitionRef.current.start();
-          console.log('🎤 Speech recognition started');
-        } catch (error: any) {
-          if (error.message && error.message.includes('already started')) {
-            console.log('⚠️ Recognition already running');
-          } else {
-            console.error('❌ Error starting speech recognition:', error);
-          }
-        }
-      } else if (useWhisper) {
-        console.log('🎙️ Using Whisper for transcription (recording audio for processing)');
-      } else {
-        console.error('❌ Speech recognition not initialized');
-        alert('Speech recognition is not available. Please use Chrome or Edge browser.');
-      }
+      console.log('️ Using Whisper AI for transcription (recording audio)');
 
       mediaRecorder.start();
       setIsRecording(true);
-      console.log('🔴 Recording started with advanced audio settings');
+      console.log('🔴 Recording started with professional audio settings');
       console.log('✅ Echo cancellation: ON');
       console.log('✅ Noise suppression: ON');
       console.log('✅ Auto gain control: ON');
+      console.log('✅ Whisper AI: 95% accuracy');
     } catch (error) {
       console.error('❌ Error accessing microphone:', error);
       alert('Please allow microphone access to practice speaking! Click the lock icon in the address bar to grant permission.');
@@ -390,37 +240,22 @@ export function InteractiveSpeakingPractice() {
   const stopRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
       console.log('⏹️ Stopping recording...');
-      if (useWhisper) {
-        console.log('Will use Whisper for transcription');
-      } else {
-        console.log('Current Web Speech API transcript:', transcript);
-      }
+      console.log('Will transcribe with Whisper AI');
       
       mediaRecorderRef.current.stop();
-      
-      // Only stop Web Speech API if not using Whisper
-      if (!useWhisper && recognitionRef.current) {
-        try {
-          recognitionRef.current.stop();
-          console.log('Speech recognition stopped');
-        } catch (error) {
-          console.error('Error stopping speech recognition:', error);
-        }
-      }
-      
       setIsRecording(false);
     }
   };
 
   // Process student's response
-  const processStudentResponse = async (audioUrl: string, whisperTranscript?: string) => {
+  const processStudentResponse = async (audioUrl: string, whisperTranscript: string) => {
     setIsProcessing(true);
     setIsCapturingAnswer(false);
 
     console.log('📝 Processing response...');
     
-    // Use Whisper transcript if provided, otherwise use Web Speech API transcript
-    const capturedTranscript = whisperTranscript || transcript.trim();
+    // Use Whisper transcript
+    const capturedTranscript = whisperTranscript.trim();
     
     console.log('Transcript length:', capturedTranscript.length);
     console.log('Transcript content:', capturedTranscript);
@@ -430,12 +265,8 @@ export function InteractiveSpeakingPractice() {
       console.error('❌ No transcript captured');
       setIsProcessing(false);
       
-      // More helpful error message
-      const errorMsg = useWhisper
-        ? 'I didn\'t catch your answer. Please:\n\n1. Speak clearly and loudly\n2. Ensure your microphone is working\n3. Try speaking for at least 3 seconds\n4. Check that your browser supports audio recording\n\nClick OK to try again.'
-        : recognitionRef.current 
-          ? 'I didn\'t catch your answer. Please:\n\n1. Speak clearly and loudly\n2. Ensure your microphone is working\n3. Allow microphone permissions\n4. Try speaking for 3-5 seconds minimum\n\nClick OK to try again.'
-          : 'Speech recognition is not available. Please use Chrome or Edge browser.';
+      // Error message
+      const errorMsg = 'I didn\'t catch your answer. Please:\n\n1. Speak clearly and loudly\n2. Ensure your microphone is working\n3. Try speaking for at least 3 seconds\n4. Make sure you\'re in a quiet environment\n\nClick OK to try again.';
       
       alert(errorMsg);
       return;
@@ -444,12 +275,7 @@ export function InteractiveSpeakingPractice() {
     
     // Add student's response to chat
     addMessage('student', capturedTranscript);
-    console.log('Student response captured:', capturedTranscript);
-
-    // Clear transcript for next recording
-    setTranscript('');
-    setInterimTranscript('');
-    console.log('Transcript cleared for next answer');
+    console.log('✅ Student response captured:', capturedTranscript);
 
     try {
       // Generate AI follow-up question based on response
@@ -638,7 +464,6 @@ export function InteractiveSpeakingPractice() {
     setExamStarted(false);
     setExamPart(1);
     setCurrentQuestion('');
-    setTranscript('');
     setShowFeedback(false);
     setSessionFeedback('');
     window.speechSynthesis.cancel();
@@ -753,51 +578,49 @@ export function InteractiveSpeakingPractice() {
             </div>
 
             {/* Whisper Status Indicator */}
-            {useWhisper && (
-              <div className={`max-w-2xl mx-auto mb-8 p-4 rounded-lg border ${
-                whisperStatus === 'ready' 
-                  ? 'bg-green-50 border-green-300' 
-                  : whisperStatus === 'loading'
-                  ? 'bg-blue-50 border-blue-300'
-                  : 'bg-red-50 border-red-300'
-              }`}>
-                <div className="flex items-center gap-3">
-                  {whisperStatus === 'ready' && (
-                    <>
-                      <span className="text-2xl">✅</span>
-                      <div>
-                        <p className="font-semibold text-green-800">Whisper AI Ready!</p>
-                        <p className="text-sm text-green-700">
-                          Professional speech recognition with 95% accuracy (FREE!)
-                        </p>
-                      </div>
-                    </>
-                  )}
-                  {whisperStatus === 'loading' && (
-                    <>
-                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
-                      <div>
-                        <p className="font-semibold text-blue-800">Loading Whisper AI...</p>
-                        <p className="text-sm text-blue-700">
-                          First-time download (~150MB). Next time will be instant!
-                        </p>
-                      </div>
-                    </>
-                  )}
-                  {whisperStatus === 'error' && (
-                    <>
-                      <span className="text-2xl">⚠️</span>
-                      <div>
-                        <p className="font-semibold text-red-800">Using Basic Speech Recognition</p>
-                        <p className="text-sm text-red-700">
-                          Whisper failed to load. Using browser's built-in recognition (70-80% accuracy).
-                        </p>
-                      </div>
-                    </>
-                  )}
-                </div>
+            <div className={`max-w-2xl mx-auto mb-8 p-4 rounded-lg border ${
+              whisperStatus === 'ready' 
+                ? 'bg-green-50 border-green-300' 
+                : whisperStatus === 'loading'
+                ? 'bg-blue-50 border-blue-300'
+                : 'bg-red-50 border-red-300'
+            }`}>
+              <div className="flex items-center gap-3">
+                {whisperStatus === 'ready' && (
+                  <>
+                    <span className="text-2xl">✅</span>
+                    <div>
+                      <p className="font-semibold text-green-800">Whisper AI Ready!</p>
+                      <p className="text-sm text-green-700">
+                        Professional speech recognition with 95% accuracy (FREE!)
+                      </p>
+                    </div>
+                  </>
+                )}
+                {whisperStatus === 'loading' && (
+                  <>
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+                    <div>
+                      <p className="font-semibold text-blue-800">Loading Whisper AI...</p>
+                      <p className="text-sm text-blue-700">
+                        First-time download (~150MB). Next time will be instant!
+                      </p>
+                    </div>
+                  </>
+                )}
+                {whisperStatus === 'error' && (
+                  <>
+                    <span className="text-2xl">❌</span>
+                    <div>
+                      <p className="font-semibold text-red-800">Whisper AI Failed to Load</p>
+                      <p className="text-sm text-red-700">
+                        Please check your internet connection and refresh the page.
+                      </p>
+                    </div>
+                  </>
+                )}
               </div>
-            )}
+            </div>
 
             {/* Gemini Status Indicator */}
             {!isGeminiConfigured() && (
@@ -981,16 +804,9 @@ export function InteractiveSpeakingPractice() {
                         </p>
                       </div>
                       
-                      {/* Transcript Display */}
-                      {transcript && (
-                        <p className="text-gray-800 text-sm mb-1 font-medium">{transcript}</p>
-                      )}
-                      {interimTranscript && (
-                        <p className="text-gray-500 text-sm italic opacity-75">{interimTranscript}</p>
-                      )}
-                      {!transcript && !interimTranscript && (
-                        <p className="text-gray-400 text-sm italic">Start speaking now... 🎙️</p>
-                      )}
+                      {/* Recording Status */}
+                      <p className="text-gray-600 text-sm italic">Recording with Whisper AI... 🎙️</p>
+                      <p className="text-gray-500 text-xs">Speak clearly for 3-10 seconds</p>
                     </div>
                   </div>
                 )}
@@ -1031,16 +847,10 @@ export function InteractiveSpeakingPractice() {
                   <div className="flex items-center gap-3">
                     <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
                     <div className="flex-1">
-                      <p className="font-semibold text-red-800">Recording...</p>
-                      <p className="text-sm text-red-600">Speak clearly and naturally</p>
+                      <p className="font-semibold text-red-800">Recording with Whisper AI...</p>
+                      <p className="text-sm text-red-600">Speak clearly - transcription will be shown after you stop</p>
                     </div>
                   </div>
-                  {transcript && (
-                    <div className="mt-3 pt-3 border-t border-red-200">
-                      <p className="text-sm text-gray-600 mb-1">Live transcript:</p>
-                      <p className="text-gray-800 italic">"{transcript}"</p>
-                    </div>
-                  )}
                 </div>
               )}
             </div>
