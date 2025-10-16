@@ -16,6 +16,8 @@ import {
 import { TopicSelector } from './TopicSelector';
 import { QuestionBankImporter } from './QuestionBankImporter';
 import { QUESTION_BANKS, QUESTION_TOPICS, TopicKey, getRandomQuestions, getCueCard } from '@/lib/question-banks';
+import { transcribeAudio, initializeWhisper, isWhisperSupported } from '@/lib/whisper-client';
+import { generateSpeakingFeedbackWithGemini, isGeminiConfigured } from '@/lib/gemini-client';
 
 type Message = {
   id: string;
@@ -64,6 +66,30 @@ export function InteractiveSpeakingPractice() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  
+  // Whisper settings
+  const [useWhisper, setUseWhisper] = useState(true); // Use Whisper by default
+  const [whisperStatus, setWhisperStatus] = useState<'loading' | 'ready' | 'error' | null>(null);
+
+  // Initialize Whisper on component mount
+  useEffect(() => {
+    if (useWhisper && isWhisperSupported()) {
+      setWhisperStatus('loading');
+      initializeWhisper()
+        .then(() => {
+          setWhisperStatus('ready');
+          console.log('✅ Whisper ready for speech recognition');
+        })
+        .catch((error) => {
+          console.error('❌ Failed to initialize Whisper:', error);
+          setWhisperStatus('error');
+          setUseWhisper(false); // Fall back to Web Speech API
+        });
+    } else if (useWhisper) {
+      console.warn('⚠️ Whisper not supported, falling back to Web Speech API');
+      setUseWhisper(false);
+    }
+  }, []);
 
   // Initialize Speech Recognition with Advanced Settings
   useEffect(() => {
@@ -299,8 +325,29 @@ export function InteractiveSpeakingPractice() {
         // Stop all tracks
         stream.getTracks().forEach(track => track.stop());
         
-        // Process the response
-        await processStudentResponse(audioUrl);
+        // Transcribe with Whisper if enabled, otherwise use Web Speech API transcript
+        let finalTranscript = '';
+        
+        if (useWhisper && whisperStatus === 'ready') {
+          try {
+            console.log('🎤 Transcribing with Whisper...');
+            setIsProcessing(true);
+            finalTranscript = await transcribeAudio(audioBlob);
+            console.log('✅ Whisper transcription:', finalTranscript);
+          } catch (error) {
+            console.error('❌ Whisper transcription failed, falling back to Web Speech API');
+            finalTranscript = transcript.trim();
+          } finally {
+            setIsProcessing(false);
+          }
+        } else {
+          // Use Web Speech API transcript (existing behavior)
+          finalTranscript = transcript.trim();
+          console.log('📝 Using Web Speech API transcript:', finalTranscript);
+        }
+        
+        // Process the response with the final transcript
+        await processStudentResponse(audioUrl, finalTranscript);
       };
 
       // Clear previous transcript and start fresh
@@ -308,8 +355,8 @@ export function InteractiveSpeakingPractice() {
       setInterimTranscript('');
       setIsCapturingAnswer(true);
       
-      // Start speech recognition with retry logic
-      if (recognitionRef.current) {
+      // Start speech recognition with retry logic (only if not using Whisper)
+      if (!useWhisper && recognitionRef.current) {
         try {
           recognitionRef.current.start();
           console.log('🎤 Speech recognition started');
@@ -320,6 +367,8 @@ export function InteractiveSpeakingPractice() {
             console.error('❌ Error starting speech recognition:', error);
           }
         }
+      } else if (useWhisper) {
+        console.log('🎙️ Using Whisper for transcription (recording audio for processing)');
       } else {
         console.error('❌ Speech recognition not initialized');
         alert('Speech recognition is not available. Please use Chrome or Edge browser.');
@@ -340,12 +389,17 @@ export function InteractiveSpeakingPractice() {
   // Stop recording
   const stopRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
-      console.log('Stopping recording...');
-      console.log('Current transcript:', transcript);
+      console.log('⏹️ Stopping recording...');
+      if (useWhisper) {
+        console.log('Will use Whisper for transcription');
+      } else {
+        console.log('Current Web Speech API transcript:', transcript);
+      }
       
       mediaRecorderRef.current.stop();
       
-      if (recognitionRef.current) {
+      // Only stop Web Speech API if not using Whisper
+      if (!useWhisper && recognitionRef.current) {
         try {
           recognitionRef.current.stop();
           console.log('Speech recognition stopped');
@@ -359,33 +413,34 @@ export function InteractiveSpeakingPractice() {
   };
 
   // Process student's response
-  const processStudentResponse = async (audioUrl: string) => {
+  const processStudentResponse = async (audioUrl: string, whisperTranscript?: string) => {
     setIsProcessing(true);
     setIsCapturingAnswer(false);
 
-    console.log('Processing response...');
-    console.log('Transcript length:', transcript.length);
-    console.log('Transcript content:', transcript);
-
-    // Give a brief moment for final transcript to be processed
-    await new Promise(resolve => setTimeout(resolve, 500));
+    console.log('📝 Processing response...');
+    
+    // Use Whisper transcript if provided, otherwise use Web Speech API transcript
+    const capturedTranscript = whisperTranscript || transcript.trim();
+    
+    console.log('Transcript length:', capturedTranscript.length);
+    console.log('Transcript content:', capturedTranscript);
 
     // Validate transcript exists
-    if (!transcript || transcript.trim().length === 0) {
-      console.error('No transcript captured');
+    if (!capturedTranscript || capturedTranscript.length === 0) {
+      console.error('❌ No transcript captured');
       setIsProcessing(false);
       
       // More helpful error message
-      const errorMsg = recognitionRef.current 
-        ? 'I didn\'t catch your answer. Please:\n\n1. Speak clearly and loudly\n2. Ensure your microphone is working\n3. Allow microphone permissions\n4. Try speaking for 3-5 seconds minimum\n\nClick OK to try again.'
-        : 'Speech recognition is not available. Please use Chrome or Edge browser.';
+      const errorMsg = useWhisper
+        ? 'I didn\'t catch your answer. Please:\n\n1. Speak clearly and loudly\n2. Ensure your microphone is working\n3. Try speaking for at least 3 seconds\n4. Check that your browser supports audio recording\n\nClick OK to try again.'
+        : recognitionRef.current 
+          ? 'I didn\'t catch your answer. Please:\n\n1. Speak clearly and loudly\n2. Ensure your microphone is working\n3. Allow microphone permissions\n4. Try speaking for 3-5 seconds minimum\n\nClick OK to try again.'
+          : 'Speech recognition is not available. Please use Chrome or Edge browser.';
       
       alert(errorMsg);
       return;
     }
 
-    // Save transcript to a variable before clearing
-    const capturedTranscript = transcript.trim();
     
     // Add student's response to chat
     addMessage('student', capturedTranscript);
@@ -542,20 +597,36 @@ export function InteractiveSpeakingPractice() {
       .map(m => m.text)
       .join('\n\n');
 
-    // Generate comprehensive feedback
+    // Generate comprehensive feedback using Gemini (free) or fallback to Perplexity
     try {
-      const feedback = await generateSpeakingFeedback(
-        studentResponses,
-        'Complete IELTS Speaking Test',
-        6.0,
-        2
-      );
+      let feedback = '';
+      
+      if (isGeminiConfigured()) {
+        console.log('🤖 Generating feedback with Google Gemini (FREE)...');
+        feedback = await generateSpeakingFeedbackWithGemini(
+          studentResponses,
+          'Complete IELTS Speaking Test',
+          6.0,
+          2
+        );
+      } else {
+        console.log('⚠️ Gemini not configured, using Perplexity fallback');
+        console.log('Get free Gemini API key at: https://aistudio.google.com/apikey');
+        feedback = await generateSpeakingFeedback(
+          studentResponses,
+          'Complete IELTS Speaking Test',
+          6.0,
+          2
+        );
+      }
       
       setSessionFeedback(feedback);
       setShowFeedback(true);
       
     } catch (error) {
       console.error('Error generating feedback:', error);
+      setSessionFeedback('Sorry, there was an error generating feedback. Please try again or check your API configuration.');
+      setShowFeedback(true);
     } finally {
       setIsProcessing(false);
     }
@@ -674,12 +745,82 @@ export function InteractiveSpeakingPractice() {
               </div>
             </div>
 
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-8 max-w-2xl mx-auto">
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4 max-w-2xl mx-auto">
               <p className="text-sm text-gray-700">
                 ⚠️ <strong>Important:</strong> Please allow microphone access when prompted.
                 Make sure you're in a quiet environment for best results.
               </p>
             </div>
+
+            {/* Whisper Status Indicator */}
+            {useWhisper && (
+              <div className={`max-w-2xl mx-auto mb-8 p-4 rounded-lg border ${
+                whisperStatus === 'ready' 
+                  ? 'bg-green-50 border-green-300' 
+                  : whisperStatus === 'loading'
+                  ? 'bg-blue-50 border-blue-300'
+                  : 'bg-red-50 border-red-300'
+              }`}>
+                <div className="flex items-center gap-3">
+                  {whisperStatus === 'ready' && (
+                    <>
+                      <span className="text-2xl">✅</span>
+                      <div>
+                        <p className="font-semibold text-green-800">Whisper AI Ready!</p>
+                        <p className="text-sm text-green-700">
+                          Professional speech recognition with 95% accuracy (FREE!)
+                        </p>
+                      </div>
+                    </>
+                  )}
+                  {whisperStatus === 'loading' && (
+                    <>
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+                      <div>
+                        <p className="font-semibold text-blue-800">Loading Whisper AI...</p>
+                        <p className="text-sm text-blue-700">
+                          First-time download (~150MB). Next time will be instant!
+                        </p>
+                      </div>
+                    </>
+                  )}
+                  {whisperStatus === 'error' && (
+                    <>
+                      <span className="text-2xl">⚠️</span>
+                      <div>
+                        <p className="font-semibold text-red-800">Using Basic Speech Recognition</p>
+                        <p className="text-sm text-red-700">
+                          Whisper failed to load. Using browser's built-in recognition (70-80% accuracy).
+                        </p>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Gemini Status Indicator */}
+            {!isGeminiConfigured() && (
+              <div className="max-w-2xl mx-auto mb-8 p-4 rounded-lg border bg-orange-50 border-orange-300">
+                <div className="flex items-start gap-3">
+                  <span className="text-2xl">🔑</span>
+                  <div>
+                    <p className="font-semibold text-orange-800">Get FREE Gemini API Key</p>
+                    <p className="text-sm text-orange-700 mb-2">
+                      For AI-powered feedback, get a free Gemini API key (1500 requests/day, no credit card!)
+                    </p>
+                    <a
+                      href="https://aistudio.google.com/apikey"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-orange-600 hover:text-orange-800 font-medium underline"
+                    >
+                      Get Free API Key →
+                    </a>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="flex gap-4 justify-center flex-wrap">
               {!selectedTopic && !importedBank ? (
