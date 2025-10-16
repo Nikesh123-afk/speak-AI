@@ -58,6 +58,7 @@ export function InteractiveSpeakingPractice() {
   const audioChunksRef = useRef<Blob[]>([]);
   const recognitionRef = useRef<any>(null);
   const [transcript, setTranscript] = useState('');
+  const [interimTranscript, setInterimTranscript] = useState(''); // Show interim results
   const [isCapturingAnswer, setIsCapturingAnswer] = useState(false); // Track if we're waiting for answer
 
   // Initialize Speech Recognition
@@ -70,16 +71,53 @@ export function InteractiveSpeakingPractice() {
       recognitionRef.current.lang = 'en-US';
 
       recognitionRef.current.onresult = (event: any) => {
-        let finalTranscript = '';
+        let interimText = '';
+        let finalText = '';
+        
         for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcriptPiece = event.results[i][0].transcript;
           if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript + ' ';
+            finalText += transcriptPiece + ' ';
+          } else {
+            interimText += transcriptPiece;
           }
         }
-        if (finalTranscript) {
-          setTranscript(prev => prev + finalTranscript);
+        
+        // Update with both interim and final results
+        if (finalText) {
+          setTranscript(prev => prev + finalText);
+          console.log('Final transcript captured:', finalText);
+          setInterimTranscript(''); // Clear interim once we have final
+        }
+        if (interimText) {
+          setInterimTranscript(interimText);
+          console.log('Interim transcript:', interimText);
         }
       };
+
+      recognitionRef.current.onerror = (event: any) => {
+        console.error('Speech recognition error:', event.error);
+        if (event.error === 'no-speech') {
+          console.log('No speech detected, please speak louder');
+        } else if (event.error === 'audio-capture') {
+          console.error('No microphone detected');
+          alert('No microphone detected. Please check your microphone connection.');
+        } else if (event.error === 'not-allowed') {
+          console.error('Microphone permission denied');
+          alert('Microphone permission denied. Please allow microphone access.');
+        }
+      };
+
+      recognitionRef.current.onend = () => {
+        console.log('Speech recognition ended');
+      };
+
+      recognitionRef.current.onstart = () => {
+        console.log('Speech recognition started successfully');
+      };
+    } else {
+      console.error('Speech recognition not supported in this browser');
+      alert('Speech recognition is not supported in your browser. Please use Chrome or Edge.');
     }
   }, []);
 
@@ -154,6 +192,7 @@ export function InteractiveSpeakingPractice() {
 
       // Clear previous transcript and start fresh
       setTranscript('');
+      setInterimTranscript('');
       setIsCapturingAnswer(true);
       
       // Start speech recognition
@@ -164,6 +203,9 @@ export function InteractiveSpeakingPractice() {
         } catch (error) {
           console.error('Error starting speech recognition:', error);
         }
+      } else {
+        console.error('Speech recognition not initialized');
+        alert('Speech recognition is not available. Please use Chrome or Edge browser.');
       }
 
       mediaRecorder.start();
@@ -201,11 +243,24 @@ export function InteractiveSpeakingPractice() {
     setIsProcessing(true);
     setIsCapturingAnswer(false);
 
+    console.log('Processing response...');
+    console.log('Transcript length:', transcript.length);
+    console.log('Transcript content:', transcript);
+
+    // Give a brief moment for final transcript to be processed
+    await new Promise(resolve => setTimeout(resolve, 500));
+
     // Validate transcript exists
     if (!transcript || transcript.trim().length === 0) {
       console.error('No transcript captured');
       setIsProcessing(false);
-      alert('Sorry, I didn\'t catch your answer. Please try again and speak clearly.');
+      
+      // More helpful error message
+      const errorMsg = recognitionRef.current 
+        ? 'I didn\'t catch your answer. Please:\n\n1. Speak clearly and loudly\n2. Ensure your microphone is working\n3. Allow microphone permissions\n4. Try speaking for 3-5 seconds minimum\n\nClick OK to try again.'
+        : 'Speech recognition is not available. Please use Chrome or Edge browser.';
+      
+      alert(errorMsg);
       return;
     }
 
@@ -626,14 +681,22 @@ export function InteractiveSpeakingPractice() {
                   </div>
                 )}
 
-                {isCapturingAnswer && transcript && (
+                {isCapturingAnswer && (
                   <div className="flex justify-end">
                     <div className="bg-green-50 border border-green-200 p-4 rounded-lg max-w-[80%]">
                       <div className="flex items-center gap-2 mb-2">
                         <div className="animate-pulse rounded-full h-3 w-3 bg-green-500"></div>
-                        <span className="text-green-700 font-semibold text-sm">Capturing your answer...</span>
+                        <span className="text-green-700 font-semibold text-sm">🎤 Listening...</span>
                       </div>
-                      <p className="text-gray-700 text-sm italic">{transcript}</p>
+                      {transcript && (
+                        <p className="text-gray-800 text-sm mb-1 font-medium">{transcript}</p>
+                      )}
+                      {interimTranscript && (
+                        <p className="text-gray-500 text-sm italic opacity-75">{interimTranscript}</p>
+                      )}
+                      {!transcript && !interimTranscript && (
+                        <p className="text-gray-400 text-sm italic">Start speaking now... 🎙️</p>
+                      )}
                     </div>
                   </div>
                 )}
